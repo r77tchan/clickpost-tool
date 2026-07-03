@@ -1,1 +1,69 @@
 @import 'tailwindcss';
+
+/* ===== 印刷専用レイアウト =====
+   「印刷」ボタンは window.print() で .print-sheet だけを A4 原寸で出力する。
+   画面UI側のルート要素には Tailwind の print:hidden を付けてある。
+   寸法は PDF 出力(src/pdf.ts)と同一: 1面 = 105×148.5mm、切り取り線は中央十字。
+   線は background ではなく border で描く(Chrome の「背景のグラフィック」設定が
+   OFF でも印刷されるように)。 */
+
+.print-sheet {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  .print-sheet {
+    display: block;
+    position: absolute;
+    inset: 0 auto auto 0;
+    width: 210mm;
+    height: 297mm;
+    background: #fff;
+  }
+
+  .print-label {
+    position: absolute;
+    width: 105mm;
+    height: 148.5mm;
+  }
+
+  .print-label-0 {
+    left: 0;
+    top: 0;
+  }
+  .print-label-1 {
+    left: 105mm;
+    top: 0;
+  }
+  .print-label-2 {
+    left: 0;
+    top: 148.5mm;
+  }
+  .print-label-3 {
+    left: 105mm;
+    top: 148.5mm;
+  }
+
+  .print-cut-v {
+    position: absolute;
+    left: 105mm;
+    top: 0;
+    width: 0;
+    height: 297mm;
+    border-left: 0.15mm dashed #9e9e9e;
+  }
+
+  .print-cut-h {
+    position: absolute;
+    left: 0;
+    top: 148.5mm;
+    width: 210mm;
+    height: 0;
+    border-top: 0.15mm dashed #9e9e9e;
+  }
+}

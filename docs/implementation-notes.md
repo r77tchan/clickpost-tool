@@ -56,3 +56,23 @@
   - `useWorkerFetch: false` を指定しないと worker が直接 fetch しようとして factory が使われないので注意。
 - **standard_fonts / wasm**: クリックポストPDFでは実測でリクエストされないため埋め込まない(要求されたら factory が throw し、pdfjs は警告してフォールバック描画する)。
 - 未対応のCMapを使うPDFが来た場合は「CMap「◯◯」は埋め込まれていません」エラーで読み込み失敗になる(Pages 版は全CMapを配信しているため影響なし)。
+
+## 8. 印刷は PDF を経由しない(file:// 対応)
+
+当初の「印刷」は生成PDFを非表示 iframe に読み込んで `contentWindow.print()` を呼ぶ方式だったが、
+**file:// で開いたシングルHTML版では Blob URL のオリジンが不透明(null origin)扱いになり、
+iframe の contentWindow へのアクセスがクロスオリジン制約でブロックされて印刷できない**
+(ユーザー報告により発覚)。
+
+対応: ページ自身に**印刷専用レイアウト**(`App.tsx` の `.print-sheet`)を持たせ、`window.print()`
+を呼ぶ方式に変更。iframe も PDF も介さないためオリジン制約を受けず、file:// でも http(s) でも同一に動く。
+
+- 画面UIのルート要素に Tailwind の `print:hidden`、`.print-sheet` は `@media print` でのみ表示(`index.css`)。
+- `@page { size: A4; margin: 0 }` + mm 単位の絶対配置(1面 = 105×148.5mm)。**寸法定義が
+  PDF出力(`src/pdf.ts`)と印刷CSS(`src/index.css`)の2箇所にある**ので、変更時は両方を揃えること。
+- 各ラベルの原寸PNGは読み込み時に Blob URL(`LoadedLabel.printUrl`)として保持し、
+  `.print-sheet` に常時レンダリングしておく(印刷時にロード待ちが発生しない)。削除時に revoke。
+- 切り取り線は `background`(repeating-linear-gradient)ではなく **border の dashed で描く**
+  (Chrome の印刷設定「背景のグラフィック」がOFFでも印字されるように)。
+- 検証: `.print-sheet` を単体HTML化し headless Chrome の `--print-to-pdf`(`window.print()` と
+  同一パイプライン・同一 `@media print` CSS)で出力 → A4 原寸(誤差0.1mm未満)・面位置・十字破線を確認済み。

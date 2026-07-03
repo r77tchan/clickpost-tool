@@ -1,4 +1,7 @@
-// 生成した PDF のダウンロードと印刷(すべてブラウザ内で完結し、外部送信しない)
+// 生成した PDF のダウンロード(すべてブラウザ内で完結し、外部送信しない)。
+// 印刷は PDF を経由せず、App.tsx の印刷専用レイアウト + window.print() で行う
+// (blob PDF を iframe で print() する方式は、file:// で開いたシングルHTML版で
+//  クロスオリジン制約により動作しないため)。
 
 function toBlobUrl(bytes: Uint8Array): string {
   // pdf-lib の返す Uint8Array は ArrayBufferLike ベースの型のため、コピーして ArrayBuffer に揃える
@@ -13,34 +16,4 @@ export function downloadPdf(bytes: Uint8Array, fileName: string): void {
   anchor.download = fileName
   anchor.click()
   setTimeout(() => URL.revokeObjectURL(url), 30_000)
-}
-
-// 非表示 iframe に PDF を読み込み、ブラウザの印刷ダイアログを開く
-export function printPdf(bytes: Uint8Array): void {
-  const url = toBlobUrl(bytes)
-  const iframe = document.createElement('iframe')
-  iframe.style.position = 'fixed'
-  iframe.style.right = '0'
-  iframe.style.bottom = '0'
-  iframe.style.width = '1px'
-  iframe.style.height = '1px'
-  iframe.style.opacity = '0'
-  iframe.style.pointerEvents = 'none'
-  iframe.src = url
-
-  const cleanup = () => {
-    URL.revokeObjectURL(url)
-    iframe.remove()
-  }
-  iframe.addEventListener('load', () => {
-    const win = iframe.contentWindow
-    if (!win) return
-    win.addEventListener('afterprint', () => setTimeout(cleanup, 1_000))
-    win.focus()
-    win.print()
-  })
-  // afterprint が発火しないブラウザ向けの保険
-  setTimeout(cleanup, 10 * 60_000)
-
-  document.body.appendChild(iframe)
 }

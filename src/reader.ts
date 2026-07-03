@@ -76,6 +76,8 @@ export interface LoadedLabel {
   fileName: string
   /** ラベル領域(ページ左上 1/4)を印刷品質でレンダリングした PNG(出力 PDF に埋め込む) */
   pngBytes: Uint8Array
+  /** 印刷用レイアウトに貼る原寸 PNG の Blob URL(ラベル削除時に revoke する) */
+  printUrl: string
   /** 画面プレビュー用の縮小画像(data URL) */
   previewUrl: string
   warnings: string[]
@@ -149,12 +151,21 @@ export async function loadLabelFromFile(file: File): Promise<LoadResult> {
 
     eraseOriginalCutMarks(canvas)
 
-    const pngBytes = await canvasToPngBytes(canvas)
+    const pngBlob = await canvasToPngBlob(canvas)
+    const pngBytes = new Uint8Array(await pngBlob.arrayBuffer())
+    const printUrl = URL.createObjectURL(pngBlob)
     const previewUrl = shrinkToDataUrl(canvas, PREVIEW_WIDTH_PX)
 
     return {
       ok: true,
-      label: { id: crypto.randomUUID(), fileName: file.name, pngBytes, previewUrl, warnings },
+      label: {
+        id: crypto.randomUUID(),
+        fileName: file.name,
+        pngBytes,
+        printUrl,
+        previewUrl,
+        warnings,
+      },
     }
   } catch {
     return { ok: false, error: `「${file.name}」の描画に失敗しました。` }
@@ -175,14 +186,13 @@ function eraseOriginalCutMarks(canvas: HTMLCanvasElement): void {
   context.fillRect(0, canvas.height - trimY, canvas.width, trimY)
 }
 
-async function canvasToPngBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {
-  const blob = await new Promise<Blob>((resolve, reject) => {
+function canvasToPngBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
       (result) => (result ? resolve(result) : reject(new Error('PNGへの変換に失敗しました'))),
       'image/png',
     )
   })
-  return new Uint8Array(await blob.arrayBuffer())
 }
 
 function shrinkToDataUrl(source: HTMLCanvasElement, targetWidth: number): string {

@@ -8,6 +8,9 @@ import { downloadPdf } from './output.ts'
 
 type Slots = ReadonlyArray<LoadedLabel | null>
 
+// スロット間ドラッグ&ドロップの DataTransfer 型(ファイルのドロップと区別するためのカスタム型)
+const SLOT_MIME = 'application/x-clickpost-slot'
+
 function formatTimestamp(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0')
   return (
@@ -23,6 +26,8 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const [cutLines, setCutLines] = useState(false)
+  const [dragSource, setDragSource] = useState<number | null>(null)
+  const [dragTarget, setDragTarget] = useState<number | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const hasAny = slots.some((slot) => slot !== null)
@@ -52,19 +57,20 @@ export default function App() {
     }
   }
 
+  const swapSlots = (from: number, to: number) => {
+    if (from === to) return
+    const next = [...slots]
+    ;[next[from], next[to]] = [next[to], next[from]]
+    setSlots(next)
+  }
+
   // 面クリック: 未選択なら選択、選択中なら移動先として入れ替え
   const handleSlotClick = (index: number) => {
     if (selected === null) {
       if (slots[index]) setSelected(index)
       return
     }
-    if (selected === index) {
-      setSelected(null)
-      return
-    }
-    const next = [...slots]
-    ;[next[selected], next[index]] = [next[index], next[selected]]
-    setSlots(next)
+    if (selected !== index) swapSlots(selected, index)
     setSelected(null)
   }
 
@@ -201,7 +207,7 @@ export default function App() {
                 <h2 className="font-semibold text-gray-800">使い方</h2>
                 <ol className="mt-2 list-decimal space-y-1 pl-5">
                   <li>クリックポストでダウンロードした宛名ラベルPDFを読み込む(最大4件)</li>
-                  <li>プレビューの面をクリックして選択し、移動先の面をクリックして配置を決める</li>
+                  <li>プレビューの面をドラッグ&ドロップして配置を決める(クリック選択でも可)</li>
                   <li>普通紙に印刷して切る場合は「切り取り線を入れる」にチェック</li>
                   <li>「PDFをダウンロード」または「印刷」で出力し、倍率100%で印刷する</li>
                 </ol>
@@ -214,23 +220,54 @@ export default function App() {
                   {slots.map((slot, index) => (
                     <div
                       key={slot?.id ?? `empty-${index}`}
+                      onDragOver={(event) => {
+                        if (!event.dataTransfer.types.includes(SLOT_MIME)) return
+                        event.preventDefault()
+                        event.dataTransfer.dropEffect = 'move'
+                        if (dragTarget !== index) setDragTarget(index)
+                      }}
+                      onDragLeave={() =>
+                        setDragTarget((current) => (current === index ? null : current))
+                      }
+                      onDrop={(event) => {
+                        if (!event.dataTransfer.types.includes(SLOT_MIME)) return
+                        event.preventDefault()
+                        const from = Number(event.dataTransfer.getData(SLOT_MIME))
+                        if (Number.isInteger(from) && from >= 0 && from < SLOT_COUNT) {
+                          swapSlots(from, index)
+                        }
+                        setDragSource(null)
+                        setDragTarget(null)
+                      }}
                       className={`relative border border-dashed ${
                         cutLines ? 'border-gray-500' : 'border-gray-300'
-                      }`}
+                      } ${dragTarget === index ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : ''}`}
                     >
                       {slot ? (
                         <>
                           <button
                             type="button"
+                            draggable
+                            onDragStart={(event) => {
+                              event.dataTransfer.setData(SLOT_MIME, String(index))
+                              event.dataTransfer.effectAllowed = 'move'
+                              setDragSource(index)
+                              setSelected(null)
+                            }}
+                            onDragEnd={() => {
+                              setDragSource(null)
+                              setDragTarget(null)
+                            }}
                             onClick={() => handleSlotClick(index)}
                             title={`${SLOT_NAMES[index]}: ${slot.fileName}`}
-                            className={`block h-full w-full cursor-pointer bg-white ${
+                            className={`block h-full w-full cursor-grab bg-white active:cursor-grabbing ${
                               selected === index ? 'ring-4 ring-blue-500 ring-inset' : ''
-                            }`}
+                            } ${dragSource === index ? 'opacity-40' : ''}`}
                           >
                             <img
                               src={slot.previewUrl}
                               alt={slot.fileName}
+                              draggable={false}
                               className="h-full w-full object-fill"
                             />
                           </button>
@@ -263,7 +300,7 @@ export default function App() {
                 </div>
               </div>
               <p className="mt-2 text-center text-xs text-gray-400">
-                面をクリックして選択 → 移動先の面をクリックで移動・入れ替え
+                面をドラッグ&ドロップで移動・入れ替え(クリックで選択 → 移動先をクリックでも可)
                 {cutLines && (
                   <span className="block">境界の破線どおりに切り取り線が印刷されます</span>
                 )}

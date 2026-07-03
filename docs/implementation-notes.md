@@ -1,4 +1,4 @@
-# 実装ノート — クリックポスト面付けツール
+# 実装ノート — クリックポスト面付けツール(clickpost-tool)
 
 2026-07-03 に実際のクリックポストPDFを使って動作検証した際に得た知見の記録。
 コードを読み解く際・将来別ツールで PDF を扱う際の参照用。
@@ -38,3 +38,21 @@
 - 1件配置(任意スロット)・4件フル配置・スロット間の移動/入れ替え・削除、いずれも動作確認済み。
 - 印刷ボタン(hidden iframe 方式)はブラウザの印刷ダイアログを開くところまで実装(実プリンタでの印刷はユーザー確認待ち)。
 - **印刷時は倍率「実際のサイズ(100%)」必須**(拡大縮小されるとシール枠とずれる)。
+
+## 6. 切り取り線(v2)
+
+- **元PDF由来の切り取り線の除去**: ラベル領域(左上1/4)の右端・下端の境界線上に破線+ハサミが印字されている。レンダリング後の canvas に対し、右端・下端の帯(`TRIM_RIGHT_MM` / `TRIM_BOTTOM_MM` = 各4mm)を白で `fillRect` して消す(`reader.ts` の `eraseOriginalCutMarks`)。ラベル本体の赤枠は境界から5mm以上内側にあるため影響しない。**位置・サイズは一切変えない**(クロップして再配置する方式は不採用 — 要件は「点線部分以外の表示は変えない」)。
+- **自前の十字切り取り線**: `composeSheet` の `cutLines` オプション。pdf-lib の `drawLine`(`dashArray: [2mm, 2mm]`、太さ0.5pt、グレー)で A4 の縦横中央に端から端まで描画。必ず4分割になる。UI のチェックボックスは初期OFF。
+
+## 7. 配布用シングルHTMLビルド(v2)
+
+`npm run build:single`(`vite build --mode single`)で `dist-single/index.html` 1ファイル(約2.4MB)を生成。file:// のダブルクリック起動で動くよう、**実行時のネットワーク取得を完全にゼロ**にしている(http 配信でリクエストが data: URL のみになることを実測確認)。
+
+- `vite-plugin-singlefile` で JS/CSS をインライン化。single モードでは `base: './'`、`assetsInlineLimit` 最大化、`copyPublicDir: false`。
+- ビルドフラグ `__SINGLE_FILE__`(vite の `define`)で reader.ts のアセット供給を分岐。Pages 版のバンドルには dead code elimination により worker の `?raw` 文字列(1.26MB)は混入しない(動的 import + フラグ分岐のため)。
+- **worker**: `pdfjs-dist/build/pdf.worker.min.mjs?raw` を動的 import して文字列として埋め込み、Blob URL で起動(§3 の方式を流用)。
+- **CMap**: 必要な5つの .bcmap(90ms-RKSJ-H/V, 90msp-RKSJ-H/V, Adobe-Japan1-UCS2 — 実測+保険)を `?url` import + `assetsInlineLimit` で data URL 化して埋め込み。
+  - pdfjs **v6 では旧 `CMapReaderFactory` / `StandardFontDataFactory` が `BinaryDataFactory` に統合**されている。`fetch({ kind, filename })` 形式(kind は 'cMapUrl' | 'standardFontDataUrl' | 'wasmUrl'、filename は拡張子付き)。
+  - `useWorkerFetch: false` を指定しないと worker が直接 fetch しようとして factory が使われないので注意。
+- **standard_fonts / wasm**: クリックポストPDFでは実測でリクエストされないため埋め込まない(要求されたら factory が throw し、pdfjs は警告してフォールバック描画する)。
+- 未対応のCMapを使うPDFが来た場合は「CMap「◯◯」は埋め込まれていません」エラーで読み込み失敗になる(Pages 版は全CMapを配信しているため影響なし)。

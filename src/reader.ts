@@ -1,18 +1,62 @@
 import * as pdfjs from 'pdfjs-dist'
-import { LABEL_RENDER_DPI, MM_TO_PT } from './constants.ts'
+import cmap90msRksjH from 'pdfjs-dist/cmaps/90ms-RKSJ-H.bcmap?url'
+import cmap90msRksjV from 'pdfjs-dist/cmaps/90ms-RKSJ-V.bcmap?url'
+import cmap90mspRksjH from 'pdfjs-dist/cmaps/90msp-RKSJ-H.bcmap?url'
+import cmap90mspRksjV from 'pdfjs-dist/cmaps/90msp-RKSJ-V.bcmap?url'
+import cmapAdobeJapan1Ucs2 from 'pdfjs-dist/cmaps/Adobe-Japan1-UCS2.bcmap?url'
+import {
+  LABEL_HEIGHT_MM,
+  LABEL_RENDER_DPI,
+  LABEL_WIDTH_MM,
+  MM_TO_PT,
+  TRIM_BOTTOM_MM,
+  TRIM_RIGHT_MM,
+} from './constants.ts'
 
-// worker・CMap(日本語CIDフォントの描画に必要)・標準フォントは、postinstall
-// (scripts/copy-pdfjs-assets.mjs)で node_modules から public/pdfjs へコピーして静的配信する。
+// 通常ビルド(GitHub Pages)では worker・CMap 等を public/pdfjs から配信する
+// (postinstall = scripts/copy-pdfjs-assets.mjs が node_modules からコピー)。
 // worker は Blob URL で起動するため、worker 内の fetch でも解決できるよう絶対 URL にする
 const PDFJS_ASSETS = new URL(`${import.meta.env.BASE_URL}pdfjs/`, window.location.href).href
 
-// worker スクリプトは fetch して Blob URL で起動する。ブラウザ拡張などが Worker の
-// スクリプトリクエストをインターセプトして固まる環境があるため(fetch は影響を受けない)
+// シングルHTML版(__SINGLE_FILE__)ではネットワークも同梱ファイルも使えないため、
+// クリックポストPDFが参照する日本語 CMap(実測で必要だったもの+保険)をバンドルに
+// data URL として埋め込み、BinaryDataFactory 経由でメモリから供給する
+const EMBEDDED_CMAPS: Record<string, string> = {
+  '90ms-RKSJ-H.bcmap': cmap90msRksjH,
+  '90ms-RKSJ-V.bcmap': cmap90msRksjV,
+  '90msp-RKSJ-H.bcmap': cmap90mspRksjH,
+  '90msp-RKSJ-V.bcmap': cmap90mspRksjV,
+  'Adobe-Japan1-UCS2.bcmap': cmapAdobeJapan1Ucs2,
+}
+
+// pdfjs の DOMBinaryDataFactory 互換。kind は 'cMapUrl' | 'standardFontDataUrl' | 'wasmUrl'
+class EmbeddedBinaryDataFactory {
+  async fetch({ kind, filename }: { kind: string; filename: string }): Promise<Uint8Array> {
+    if (kind !== 'cMapUrl') {
+      // 標準フォント・wasm はクリックポストPDFでは使われない(要求されたらフォールバック描画になる)
+      throw new Error(`${kind} はシングルHTML版には埋め込まれていません`)
+    }
+    const url = EMBEDDED_CMAPS[filename]
+    if (!url) {
+      throw new Error(`CMap「${filename}」は埋め込まれていません`)
+    }
+    const response = await fetch(url)
+    return new Uint8Array(await response.arrayBuffer())
+  }
+}
+
+// worker スクリプトは fetch(またはバンドル内文字列)から Blob URL で起動する。
+// ブラウザ拡張などが Worker のスクリプトリクエストをインターセプトして固まる環境が
+// あるため(fetch は影響を受けない)、URL を直接 new Worker に渡さない
 let workerSrcPromise: Promise<string> | null = null
 
 function ensureWorkerSrc(): Promise<string> {
   workerSrcPromise ??= (async () => {
     try {
+      if (__SINGLE_FILE__) {
+        const { default: workerRaw } = await import('pdfjs-dist/build/pdf.worker.min.mjs?raw')
+        return URL.createObjectURL(new Blob([workerRaw], { type: 'text/javascript' }))
+      }
       const response = await fetch(`${PDFJS_ASSETS}pdf.worker.min.mjs`)
       if (!response.ok) {
         throw new Error(`worker の取得に失敗しました(HTTP ${response.status})`)
@@ -46,14 +90,24 @@ const PREVIEW_WIDTH_PX = 420
 export async function loadLabelFromFile(file: File): Promise<LoadResult> {
   pdfjs.GlobalWorkerOptions.workerSrc = await ensureWorkerSrc()
   const bytes = new Uint8Array(await file.arrayBuffer())
-  const loadingTask = pdfjs.getDocument({
-    data: bytes,
-    cMapUrl: `${PDFJS_ASSETS}cmaps/`,
-    cMapPacked: true,
-    standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`,
-    wasmUrl: `${PDFJS_ASSETS}wasm/`,
-    iccUrl: `${PDFJS_ASSETS}iccs/`,
-  })
+  const loadingTask = pdfjs.getDocument(
+    __SINGLE_FILE__
+      ? {
+          data: bytes,
+          // worker 内の fetch を止め、メインスレッドの BinaryDataFactory から供給する
+          useWorkerFetch: false,
+          BinaryDataFactory: EmbeddedBinaryDataFactory,
+          cMapPacked: true,
+        }
+      : {
+          data: bytes,
+          cMapUrl: `${PDFJS_ASSETS}cmaps/`,
+          cMapPacked: true,
+          standardFontDataUrl: `${PDFJS_ASSETS}standard_fonts/`,
+          wasmUrl: `${PDFJS_ASSETS}wasm/`,
+          iccUrl: `${PDFJS_ASSETS}iccs/`,
+        },
+  )
 
   let doc: Awaited<typeof loadingTask.promise>
   try {
@@ -93,6 +147,8 @@ export async function loadLabelFromFile(file: File): Promise<LoadResult> {
     renderTask.onContinue = (cont: () => void) => cont()
     await renderTask.promise
 
+    eraseOriginalCutMarks(canvas)
+
     const pngBytes = await canvasToPngBytes(canvas)
     const previewUrl = shrinkToDataUrl(canvas, PREVIEW_WIDTH_PX)
 
@@ -105,6 +161,18 @@ export async function loadLabelFromFile(file: File): Promise<LoadResult> {
   } finally {
     void loadingTask.destroy()
   }
+}
+
+// 元PDF由来の切り取り線(右端・下端の破線+ハサミ)を白塗りで消す。
+// ラベルの位置・サイズには一切手を付けない
+function eraseOriginalCutMarks(canvas: HTMLCanvasElement): void {
+  const context = canvas.getContext('2d')
+  if (!context) return
+  const trimX = Math.ceil((TRIM_RIGHT_MM / LABEL_WIDTH_MM) * canvas.width)
+  const trimY = Math.ceil((TRIM_BOTTOM_MM / LABEL_HEIGHT_MM) * canvas.height)
+  context.fillStyle = '#ffffff'
+  context.fillRect(canvas.width - trimX, 0, trimX, canvas.height)
+  context.fillRect(0, canvas.height - trimY, canvas.width, trimY)
 }
 
 async function canvasToPngBytes(canvas: HTMLCanvasElement): Promise<Uint8Array> {

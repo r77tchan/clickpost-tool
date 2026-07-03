@@ -1,11 +1,12 @@
 {
-  "name": "skym-tools",
+  "name": "clickpost-tool",
   "private": true,
   "version": "0.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:single": "tsc -b && vite build --mode single",
     "lint": "oxlint",
     "preview": "vite preview",
     "postinstall": "node scripts/copy-pdfjs-assets.mjs"
@@ -14,8 +15,7 @@
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^6.1.200",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7",
-    "react-router": "^8.1.0"
+    "react-dom": "^19.2.7"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.2",
@@ -26,6 +26,7 @@
     "oxlint": "^1.71.0",
     "tailwindcss": "^4.3.2",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "vite-plugin-singlefile": "^2.3.3"
   }
 }

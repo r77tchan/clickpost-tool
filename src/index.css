@@ -1,5 +1,13 @@
 @import 'tailwindcss';
 
+/* スクロールバーの出現・消滅でページ幅が変わり、レイアウトがチラつくのを防ぐ
+   (スクロールバー分の領域を常に確保しておく。印刷には不要なので screen のみ) */
+@media screen {
+  html {
+    scrollbar-gutter: stable;
+  }
+}
+
 /* ===== 印刷専用レイアウト =====
    「印刷」ボタンは window.print() で .print-sheet だけを A4 原寸で出力する。
    画面UI側のルート要素には Tailwind の print:hidden を付けてある。

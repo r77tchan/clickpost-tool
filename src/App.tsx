@@ -32,14 +32,22 @@ export default function App() {
 
   const hasAny = slots.some((slot) => slot !== null)
 
-  const addFiles = async (files: ArrayLike<File>) => {
+  // targetIndex を指定すると、最初に読み込めたファイルをその面に配置(既存ラベルは上書き)し、
+  // 2件目以降は「落とした面の次」から 左上→右上→左下→右下 の循環順で空き面へ流し込む
+  // (例: 右上に2件ドロップ → 2件目は左下、右下にドロップ → 2件目は左上)
+  const addFiles = async (files: ArrayLike<File>, targetIndex?: number) => {
     if (busy) return
     setBusy(true)
     const notes: string[] = []
     const next = [...slots]
+    const replaced: LoadedLabel[] = []
+    let pendingTarget = targetIndex
+    const searchStart = targetIndex === undefined ? 0 : targetIndex + 1
+    const fillOrder = Array.from({ length: SLOT_COUNT }, (_, i) => (searchStart + i) % SLOT_COUNT)
     try {
       for (const file of Array.from(files)) {
-        if (!next.includes(null)) {
+        const dest = pendingTarget ?? fillOrder.find((slot) => next[slot] === null) ?? -1
+        if (dest === -1) {
           notes.push('空き面がないため、これ以上読み込めません(最大4件)。')
           break
         }
@@ -48,9 +56,13 @@ export default function App() {
           notes.push(result.error)
           continue
         }
-        next[next.indexOf(null)] = result.label
+        const previous = next[dest]
+        if (previous) replaced.push(previous)
+        next[dest] = result.label
+        pendingTarget = undefined
       }
       setSlots(next)
+      for (const label of replaced) URL.revokeObjectURL(label.printUrl)
     } finally {
       setMessages(notes)
       setBusy(false)
@@ -122,22 +134,19 @@ export default function App() {
       <div className="min-h-screen bg-gray-100 px-4 py-8 text-gray-900 print:hidden">
         <div className="mx-auto max-w-5xl">
           <h1 className="text-2xl font-bold">📮 クリックポスト面付けツール</h1>
-          <p className="mt-1 text-sm leading-relaxed text-gray-500">
-            クリックポストの宛名ラベルPDF(最大4件)を、A4・4面シール用紙(A-one 77220
-            など)の好きな面に配置し直したPDFを作ります。元のラベルにある切り取り線は自動で消去されます。
-            ファイルはブラウザ内でのみ処理され、外部には送信されません。
-          </p>
 
           <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
             <div>
               <div
                 onDragOver={(event) => {
+                  // OSからのファイルドラッグのみ受け付ける(面のドラッグには反応させない)
+                  if (!event.dataTransfer.types.includes('Files')) return
                   event.preventDefault()
                   setDragOver(true)
                 }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
-                className={`rounded-xl border-2 border-dashed p-8 text-center transition ${
+                className={`rounded-xl border-2 border-dashed px-8 py-18 text-center transition select-none ${
                   dragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 bg-white'
                 }`}
               >
@@ -148,7 +157,7 @@ export default function App() {
                   type="button"
                   onClick={() => inputRef.current?.click()}
                   disabled={busy}
-                  className="mt-3 cursor-pointer rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-700 disabled:opacity-50"
+                  className="mt-3 cursor-pointer rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white transition enabled:hover:bg-blue-700 disabled:cursor-default disabled:opacity-50"
                 >
                   ファイルを選択
                 </button>
@@ -170,22 +179,22 @@ export default function App() {
                 </ul>
               )}
 
-              <label className="mt-6 flex w-fit cursor-pointer items-center gap-2 text-sm text-gray-700">
+              <label className="my-8 flex w-fit cursor-pointer items-center gap-2 text-sm text-gray-700 select-none">
                 <input
                   type="checkbox"
                   checked={cutLines}
                   onChange={(event) => setCutLines(event.target.checked)}
                   className="h-4 w-4 cursor-pointer"
                 />
-                切り取り線を入れる(4分割の破線)
+                切り取り線を入れる
               </label>
 
-              <div className="mt-3 flex flex-wrap gap-3">
+              <div className="mt-3 flex flex-wrap gap-3 select-none">
                 <button
                   type="button"
                   onClick={() => void downloadSheet()}
                   disabled={!hasAny || busy}
-                  className="cursor-pointer rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:cursor-default disabled:opacity-40"
+                  className="cursor-pointer rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition enabled:hover:bg-blue-700 disabled:cursor-default disabled:opacity-40"
                 >
                   PDFをダウンロード
                 </button>
@@ -193,55 +202,47 @@ export default function App() {
                   type="button"
                   onClick={printSheet}
                   disabled={!hasAny || busy}
-                  className="cursor-pointer rounded-md border border-blue-600 bg-white px-5 py-2.5 text-sm font-semibold text-blue-600 transition hover:bg-blue-50 disabled:cursor-default disabled:opacity-40"
+                  className="cursor-pointer rounded-md border border-blue-600 bg-white px-5 py-2.5 text-sm font-semibold text-blue-600 transition enabled:hover:bg-blue-50 disabled:cursor-default disabled:opacity-40"
                 >
                   印刷
                 </button>
               </div>
-              <p className="mt-3 text-xs font-medium text-red-600">
-                ⚠
-                印刷時は倍率を「実際のサイズ(100%)」にしてください。「用紙に合わせる」ではシール枠からずれます。
-              </p>
-
-              <section className="mt-8 rounded-md bg-white p-4 text-sm text-gray-600 shadow-sm">
-                <h2 className="font-semibold text-gray-800">使い方</h2>
-                <ol className="mt-2 list-decimal space-y-1 pl-5">
-                  <li>クリックポストでダウンロードした宛名ラベルPDFを読み込む(最大4件)</li>
-                  <li>プレビューの面をドラッグ&ドロップして配置を決める(クリック選択でも可)</li>
-                  <li>普通紙に印刷して切る場合は「切り取り線を入れる」にチェック</li>
-                  <li>「PDFをダウンロード」または「印刷」で出力し、倍率100%で印刷する</li>
-                </ol>
-              </section>
             </div>
 
             <div>
-              <div className="mx-auto aspect-[210/297] w-full max-w-105 overflow-hidden rounded-md border border-gray-300 bg-white shadow-sm">
+              <div className="relative mx-auto aspect-[210/297] w-full max-w-105 overflow-hidden rounded-md border border-gray-300 bg-white shadow-sm select-none">
                 <div className="grid h-full grid-cols-2 grid-rows-2">
                   {slots.map((slot, index) => (
                     <div
                       key={slot?.id ?? `empty-${index}`}
                       onDragOver={(event) => {
-                        if (!event.dataTransfer.types.includes(SLOT_MIME)) return
+                        const isSlotDrag = event.dataTransfer.types.includes(SLOT_MIME)
+                        const isFileDrag = event.dataTransfer.types.includes('Files')
+                        if (!isSlotDrag && !isFileDrag) return
                         event.preventDefault()
-                        event.dataTransfer.dropEffect = 'move'
+                        event.dataTransfer.dropEffect = isSlotDrag ? 'move' : 'copy'
                         if (dragTarget !== index) setDragTarget(index)
                       }}
                       onDragLeave={() =>
                         setDragTarget((current) => (current === index ? null : current))
                       }
                       onDrop={(event) => {
-                        if (!event.dataTransfer.types.includes(SLOT_MIME)) return
-                        event.preventDefault()
-                        const from = Number(event.dataTransfer.getData(SLOT_MIME))
-                        if (Number.isInteger(from) && from >= 0 && from < SLOT_COUNT) {
-                          swapSlots(from, index)
+                        if (event.dataTransfer.types.includes(SLOT_MIME)) {
+                          event.preventDefault()
+                          const from = Number(event.dataTransfer.getData(SLOT_MIME))
+                          if (Number.isInteger(from) && from >= 0 && from < SLOT_COUNT) {
+                            swapSlots(from, index)
+                          }
+                        } else if (event.dataTransfer.files.length) {
+                          event.preventDefault()
+                          void addFiles(event.dataTransfer.files, index)
                         }
                         setDragSource(null)
                         setDragTarget(null)
                       }}
-                      className={`relative border border-dashed ${
-                        cutLines ? 'border-gray-500' : 'border-gray-300'
-                      } ${dragTarget === index ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : ''}`}
+                      className={`relative border border-dashed border-gray-300 ${
+                        dragTarget === index ? 'bg-blue-50 ring-2 ring-blue-400 ring-inset' : ''
+                      }`}
                     >
                       {slot ? (
                         <>
@@ -298,13 +299,19 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-              </div>
-              <p className="mt-2 text-center text-xs text-gray-400">
-                面をドラッグ&ドロップで移動・入れ替え(クリックで選択 → 移動先をクリックでも可)
+                {/* 切り取り線プレビュー: 実際の出力と同じく中央の十字のみ(外周には線は印刷されない) */}
                 {cutLines && (
-                  <span className="block">境界の破線どおりに切り取り線が印刷されます</span>
+                  <>
+                    <div className="pointer-events-none absolute inset-y-0 left-1/2 border-l border-dashed border-gray-600" />
+                    <div className="pointer-events-none absolute inset-x-0 top-1/2 border-t border-dashed border-gray-600" />
+                  </>
                 )}
-              </p>
+              </div>
+              {cutLines && (
+                <p className="mt-2 text-center text-xs text-gray-400">
+                  十字の破線どおりに切り取り線が印刷されます
+                </p>
+              )}
               {hasAny && (
                 <ul className="mt-3 space-y-1.5 text-xs text-gray-600">
                   {slots.map(
